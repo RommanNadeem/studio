@@ -3,4 +3,4 @@ openai
 python-docx
 PyMuPDF
 PyPDF2==3.0.1
-python-dotenv @ file:///Users/cbousseau/work/recipes/ci_py311/python-dotenv_1677924884036/work
+python-dotenv

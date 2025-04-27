@@ -302,14 +302,14 @@ def generate_prompts(project_data,structured_insights,client):
                         - Vector image traceable
                         - Screen print ready
                         - 4:5 ratio
-                        - style in range of 150 - 200
+                        - style in range of 120-160
                         - No gradients
                         - No 3D textures
                         - No textual elements
                         - Only low detail shading and highlights
                         - Floating objects 
                         - no frames
-                        - no backgrounds
+                        - no backgrounds at all
                         - .5mm line widths at a minimum
                         - Low complexity
                         - Minimalist artwork
@@ -318,7 +318,7 @@ def generate_prompts(project_data,structured_insights,client):
                         - vector images,
                         - make sure it is low details.
                         - make sure there is no background detail at all! 
-                        6. Generate 3 prompts.
+                        - plane background
 
                         Return your output in the following list format:
                         {

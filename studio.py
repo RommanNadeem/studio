@@ -2,7 +2,7 @@
 
 import sys
 import streamlit as st
-from openai from OPENAI
+from openai from OpenAI
 from docx import Document
 import fitz
 import json

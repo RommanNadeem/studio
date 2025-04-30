@@ -302,7 +302,7 @@ def generate_prompts(project_data,structured_insights,client):
                         - Vector image traceable
                         - Screen print ready
                         - 4:5 ratio
-                        - style in range of 120-160
+                        - stylize in the range of 120-160
                         - No gradients
                         - No 3D textures
                         - No textual elements
@@ -319,6 +319,7 @@ def generate_prompts(project_data,structured_insights,client):
                         - make sure it is low details.
                         - make sure there is no background detail at all! 
                         - plane background
+                        6.if prompt includes "--style" change it to "--stylyize".
 
                         Return your output in the following list format:
                         {

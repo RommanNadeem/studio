@@ -329,6 +329,30 @@ def generate_prompts(project_data,structured_insights,client):
                             {
                             "Prompt 2": "[MidJourney-compatible prompt string based on the design brief]"
                             },
+                            {
+                            "Prompt 3": "[MidJourney-compatible prompt string based on the design brief]"
+                            },
+                            {
+                            "Prompt 4": "[MidJourney-compatible prompt string based on the design brief]"
+                            },
+                            {
+                            "Prompt 5": "[MidJourney-compatible prompt string based on the design brief]"
+                            },
+                            {
+                            "Prompt 6": "[MidJourney-compatible prompt string based on the design brief]"
+                            },
+                            {
+                            "Prompt 7": "[MidJourney-compatible prompt string based on the design brief]"
+                            },
+                            {
+                            "Prompt 8": "[MidJourney-compatible prompt string based on the design brief]"
+                            },
+                            {
+                            "Prompt 9": "[MidJourney-compatible prompt string based on the design brief]"
+                            },
+                            {
+                            "Prompt 10": "[MidJourney-compatible prompt string based on the design brief]"
+                            },
                         ]
                         }
          Think like a designer. Be creative but bounded by the brief. Every prompt must respect the technical and artistic constraints.

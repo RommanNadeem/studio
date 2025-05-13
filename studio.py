@@ -1,6 +1,7 @@
 
 
 import sys
+import tempfile
 import streamlit as st
 from openai import OpenAI
 from docx import Document
@@ -13,6 +14,7 @@ from io import StringIO
 from docx import Document
 import PyPDF2
 import os
+import io
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -28,37 +30,75 @@ st.set_page_config(page_title="📄 Document Reader", layout="centered")
 st.title(":blue[Studio Stream]")
 
 
-uploaded_file = st.file_uploader("upload a document to begin", type=["pdf", "docx", "txt"])
+content =""
+st.title("Upload & Process")
 
-while not uploaded_file:
-    def read_pdf(file):
-        reader = PyPDF2.PdfReader(file)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text() or ""
-        return text
+mode = st.radio("Select input type:", ["Audio", "Document", "Text"])
 
+if mode == "Audio":
+    uploaded = st.file_uploader("Upload an audio file", type=["m4a", "mp3", "wav"])
+    if uploaded is not None:
+        audio_bytes = uploaded.read()
+        # file-like for API
+        audio_file = io.BytesIO(audio_bytes)
 
-def read_docx(file):
-    doc = Document(file)
-    return "\n".join([para.text for para in doc.paragraphs])
+        # if your API needs a filesystem path
+        suffix = f".{uploaded.name.split('.')[-1]}"
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        tmp.write(audio_bytes)
+        tmp.flush()
+        audio_file = open(tmp.name, "rb")
 
-def read_txt(file):
-    stringio = StringIO(file.getvalue().decode("utf-8"))
-    return stringio.read()
+        resp = client.audio.transcriptions.create(
+            model="gpt-4o-transcribe",
+            file=audio_file
+        )
+        content = resp.text
 
-if uploaded_file is not None:
-    file_type = uploaded_file.name.split(".")[-1].lower()
-
-    if file_type == "pdf":
-        content = read_pdf(uploaded_file)
-    elif file_type == "docx":
-        content = read_docx(uploaded_file)
-    elif file_type == "txt":
-        content = read_txt(uploaded_file)
     else:
-        st.error("Unsupported file type.")
-        content = ""
+        st.info("Please upload an audio file to transcribe.")
+
+
+elif mode == "Document":
+    uploaded = st.file_uploader("Upload a document", type=["pdf", "docx", "txt"])
+    if uploaded is not None:
+        file_ext = uploaded.name.rsplit(".", 1)[-1].lower()
+
+        def read_pdf(f):
+            reader = PdfReader(f)
+            return "".join(page.extract_text() or "" for page in reader.pages)
+
+        def read_docx(f):
+            doc = Document(f)
+            return "\n".join(p.text for p in doc.paragraphs)
+
+        def read_txt(f):
+            return StringIO(f.getvalue().decode("utf-8")).read()
+
+        if file_ext == "pdf":
+            content = read_pdf(uploaded)
+        elif file_ext == "docx":
+            content = read_docx(uploaded)
+        elif file_ext == "txt":
+            content = read_txt(uploaded)
+        else:
+            st.error("Unsupported file type.")
+            content = ""
+
+    else:
+        st.info("Please upload a document file.")
+
+
+else:  # Text mode
+    content = st.text_area("Paste or type your text here")
+    if not content:
+        st.info("Enter some text above to continue.")
+
+
+# ——— Show the result ———
+if 'content' in locals() and content:
+    st.subheader("Processed Content")
+    #st.write(content)
 
 
 
@@ -67,454 +107,440 @@ if uploaded_file is not None:
 
 
 
-
-completion = client.chat.completions.create(
-    model="gpt-4o-mini",  # or "gpt-4o-mini" if available
-    store=True,
-    messages=[
-        {
-            "role": "system",
-            "content": """
-You are a professional product and design brief assistant. Given a creative prompt or description of a t-shirt design project, extract the following details in a structured and detailed format.
-
-Return your output in this format:
----
-Overview:
-[brief description of the project purpose, background, intended use]
-
-Target Audience:
-- Age group:
-- Interests/Lifestyle:
-- Visual appeal (style preferences):
-- Cultural/Regional considerations:
-
-Design Goals:
-- Intended emotion/message:
-- Overall tone (high-energy, modern, minimal, etc.):
-- Suggested visual style (streetwear, retro, abstract, etc.):
-
-Key Design Elements:
-1. Subject:
-2. Action:
-3. Environment:
-4. Color scheme:
-
-What should NOT be used:
-- Unwanted colors:
-- Design techniques to avoid (gradients, photorealism, etc.):
-- Unnecessary complexities:
-- Culturally inappropriate/distracting elements:
-
-Referecnce Links:
-- Ref 1: 
-- Ref 2: 
-- Ref 3:
-- Ref 4: 
-- Ref 5:
-
-Constraints:
-- 6 colours maximum
-- Vector image traceable
-- Screen print ready
-- 4:5 ratio
-- No gradients
-- No 3D textures
-- Only low detail shading and highlights
-- Floating objects 
-- no frames
-- no backgrounds
-- .5mm line widths at a minimum
-- Low complexity
-- Minimalist artwork
-- Solid colours, no tints
-- --ar 4:5 --stylize 200 --quality 2
----
-Be specific and extarct information as it is, without adding additional content on your own.
-"""
-        },
-        {
-            "role": "user",
-            "content":content
-        }
-    ]
-)
-
-
-with st.spinner('Extarcting Data...'):
-    extarct_response = completion.choices[0].message.content
-    st.subheader("📜 Extarcted Content")
-    st.text_area("Text from document:",extarct_response, height=400)
-
-
-##Converting into a dictionary
-def parse_gpt_output(gpt_text):
-    """
-    Parses GPT output into a dictionary, where each heading (ending with ':')
-    becomes a key, and the lines that follow (until the next heading) become
-    a list of strings.
-    """
-    sections = {}
-    current_key = None
-
-    for line in gpt_text.splitlines():
-        line = line.strip()
-        
-        # Skip blank lines
-        if not line:
-            continue
-        
-        # If the line ends with a colon, treat it as a heading
-        if line.endswith(':'):
-            # Remove the colon to create the dictionary key
-            current_key = line[:-1].strip()
-            sections[current_key] = []
-        else:
-            # Otherwise, treat it as content for the current heading
-            if current_key is not None:
-                sections[current_key].append(line)
-            else:
-                # If no heading has been found yet, skip or handle as needed
-                pass
-
-    return sections
-
-
-
-parsed_dict = parse_gpt_output(extarct_response)
-
-
-
-##Research and Analysis: 
-def generate_structured_design_insights(project_data, client):
-    """
-    Extracts the "Overview" and "Reference Links" from project_data,
-    sends them to GPT with instructions to return a structured JSON response.
-    In the JSON:
-      - Each design theme is given as a key and its value is a dictionary combining:
-          • Design Concept
-          • Artistic Approach
-          • (Optionally) a list of style techniques related to that theme.
-      - Additional sections like Color Palettes, Suggestions for Kids’ Designs,
-        and a Conclusion are also included.
-    
-    :param project_data: dict containing project details with at least
-                         "Overview", "Reference Links", "Key Design Elements" and "Target Audience" keys.
-    :param client: The client object to call the GPT API.
-    :return: The structured JSON response (as a string) from GPT.
-    """
-    # Combine the "Overview" and "Reference Links" into one text block.
-    overview_text = "\n".join(project_data.get("Overview", []))
-    ref_links_text = "\n".join(project_data.get("Reference Links", []))
-    keyDesign_text = "\n".join(project_data.get("Key Design Elements", []))
-    targetAudience_text = "\n".join(project_data.get("Target Audience", []))
-    pdf_content = f"Overview:\n{overview_text}\n\nReference Links:\n{ref_links_text}\n\nKey Design:\n{keyDesign_text}\n\nTarget Audience:\n{targetAudience_text}"
-    
-    # Call the GPT model using the provided format and instruct it to output JSON.
+if content:
     completion = client.chat.completions.create(
-        model="gpt-4.1",  # or "gpt-4o-mini" if available
+        model="gpt-4o-mini",  # or "gpt-4o-mini" if available
         store=True,
         messages=[
             {
                 "role": "system",
-                "content": """"
-You are a professional assistant specializing in product and design briefs for apparel, with a focus on culturally rich and authentic storytelling.
+                "content": """
+    You are a professional product and design brief assistant. Given a creative prompt or description of a t-shirt design project, extract the following details in a structured and detailed format.
 
-You will be provided with the following inputs:
-- A project overview
-- Reference links
-- Key design elements
-- Target audience description
+    Return your output in this format:
+    ---
+    Overview:
+    [brief description of the project purpose, background, intended use]
 
-Your task is to:
-1. Research the topic thoroughly using the given information.
-2. Provide a detailed and insightful design plan that reflects the cultural and historical significance of the theme.
-3. Ensure that the plan aligns closely with the client's requirements and audience expectations.
+    Target Audience:
+    - Age group:
+    - Interests/Lifestyle:
+    - Visual appeal (style preferences):
+    - Cultural/Regional considerations:
 
-Deliver the output in **well-structured paragraph form**, avoiding lists or bullet points. The writing should feel intentional, researched, and visually descriptive — suitable for briefing a creative team or illustrator. Prioritize authenticity, relevance, and narrative depth."""
+    Design Goals:
+    - Intended emotion/message:
+    - Overall tone (high-energy, modern, minimal, etc.):
+    - Suggested visual style (streetwear, retro, abstract, etc.):
 
+    Key Design Elements:
+    1. Subject:
+    2. Action:
+    3. Environment:
+    4. Color scheme:
+
+    What should NOT be used:
+    - Unwanted colors:
+    - Design techniques to avoid (gradients, photorealism, etc.):
+    - Unnecessary complexities:
+    - Culturally inappropriate/distracting elements:
+
+    Referecnce Links:
+    - Ref 1: 
+    - Ref 2: 
+    - Ref 3:
+    - Ref 4: 
+    - Ref 5:
+
+    Constraints:
+    - 6 colours maximum
+    - Vector image traceable
+    - Screen print ready
+    - 4:5 ratio
+    - No gradients
+    - No 3D textures
+    - Only low detail shading and highlights
+    - Floating objects 
+    - no frames
+    - no backgrounds
+    - .5mm line widths at a minimum
+    - Low complexity
+    - Minimalist artwork
+    - Solid colours, no tints
+    - --ar 4:5 --stylize 200 --quality 2
+    ---
+    Be specific and extarct information as it is, without adding additional content on your own.
+    """
             },
             {
                 "role": "user",
-                "content": pdf_content
+                "content":content
             }
         ]
     )
-    
-    # Extract and return the generated structured insights from the GPT response.
-    return completion.choices[0].message.content
-
-with st.spinner('Creating Design Brief..'):
-    structured_insights = generate_structured_design_insights(parsed_dict, client)
-#print("Structured Design Insights:\n", structured_insights)
-st.subheader("📜 Design Brief")
-st.text_area("Text from document:", structured_insights, height=400)
 
 
+    with st.spinner('Extarcting Data...'):
+        extarct_response = completion.choices[0].message.content
+        st.subheader("📜 Extarcted Content")
+        st.text_area("Text from document:",extarct_response, height=400)
 
-##Generate Prompts
-def generate_prompts(project_data,structured_insights,client):    
+
+    ##Converting into a dictionary
+    def parse_gpt_output(gpt_text):
         """
-    Extracts the "Design Goals" and "What should Not be used" from project_data,
-    sends them to GPT with instructions to return a structured JSON response.
-    In the JSON:
-      - Each design theme is given as a key and its value is a dictionary combining:
-          • Design Concept
-          • Artistic Approach
-          • (Optionally) a list of style techniques related to that theme.
-      - Additional sections like Color Palettes, Suggestions for Kids’ Designs,
-        and a Conclusion are also included.
-    
-    :param project_data: dict containing project details with at least
-    "Overview", "Reference Links", "Key Design Elements" and "Target Audience" keys.
-    :param client: The client object to call the GPT API.
-    :return: The structured JSON response (as a string) from GPT.
-    """
+        Parses GPT output into a dictionary, where each heading (ending with ':')
+        becomes a key, and the lines that follow (until the next heading) become
+        a list of strings.
+        """
+        sections = {}
+        current_key = None
+
+        for line in gpt_text.splitlines():
+            line = line.strip()
+            
+            # Skip blank lines
+            if not line:
+                continue
+            
+            # If the line ends with a colon, treat it as a heading
+            if line.endswith(':'):
+                # Remove the colon to create the dictionary key
+                current_key = line[:-1].strip()
+                sections[current_key] = []
+            else:
+                # Otherwise, treat it as content for the current heading
+                if current_key is not None:
+                    sections[current_key].append(line)
+                else:
+                    # If no heading has been found yet, skip or handle as needed
+                    pass
+
+        return sections
+
+
+
+    parsed_dict = parse_gpt_output(extarct_response)
+
+
+
+    ##Research and Analysis: 
+    def generate_structured_design_insights(project_data, client):
+        """
+        Extracts the "Overview" and "Reference Links" from project_data,
+        sends them to GPT with instructions to return a structured JSON response.
+        In the JSON:
+        - Each design theme is given as a key and its value is a dictionary combining:
+            • Design Concept
+            • Artistic Approach
+            • (Optionally) a list of style techniques related to that theme.
+        - Additional sections like Color Palettes, Suggestions for Kids’ Designs,
+            and a Conclusion are also included.
         
-        design_goals = "\n".join(project_data.get("Design Goals", []))
-        avoid = "\n".join(project_data.get("What should NOT be used", []))
-        design_constraint = "\n".join(project_data.get("Constraints", []))
+        :param project_data: dict containing project details with at least
+                            "Overview", "Reference Links", "Key Design Elements" and "Target Audience" keys.
+        :param client: The client object to call the GPT API.
+        :return: The structured JSON response (as a string) from GPT.
+        """
+        # Combine the "Overview" and "Reference Links" into one text block.
+        overview_text = "\n".join(project_data.get("Overview", []))
+        ref_links_text = "\n".join(project_data.get("Reference Links", []))
+        keyDesign_text = "\n".join(project_data.get("Key Design Elements", []))
         targetAudience_text = "\n".join(project_data.get("Target Audience", []))
-        pdf_content = f"Design Goals:\n{design_goals}\n\nWhat should Not be used:\n{avoid}\n\nDesign Constraints:\n{design_constraint}\n\nTarget Audience:\n{targetAudience_text}\n\nDesign Brief:\n{structured_insights}"
-
-    
-
+        pdf_content = f"Overview:\n{overview_text}\n\nReference Links:\n{ref_links_text}\n\nKey Design:\n{keyDesign_text}\n\nTarget Audience:\n{targetAudience_text}"
+        
+        # Call the GPT model using the provided format and instruct it to output JSON.
         completion = client.chat.completions.create(
             model="gpt-4.1",  # or "gpt-4o-mini" if available
             store=True,
             messages=[
                 {
                     "role": "system",
-                    "content": """
-                        You are an expert visual designer with a deep understanding of interpreting design briefs and translating them into MidJourney prompts.
+                    "content": """"
+    You are a professional assistant specializing in product and design briefs for apparel, with a focus on culturally rich and authentic storytelling.
 
-                        Your task is to:
-                        1. Read and understand the provided design brief and extract relevant visual themes, style references, and constraints from it.
-                        2. use the research from the file {structured_insights}
-                        3. Generate unique, high-quality MidJourney prompts that strictly follow the design guidelines outlined in {pdf_content} and close to reality in terms of context. No fiction.
-                        4. Ensure that each prompt is:
-                        - Visually descriptive and contextually relevant
-                        - Formatted for MidJourney's syntax
-                        - Screen print ready and adheres to all constraints mentioned in the brief (e.g. aspect ratio, color limits, shading rules, no gradients, etc.)
-                        - Clear, concise, and structured to inspire consistent visual outputs
-                        - Add clear guideline to add no textual element in the design.
-                        5.Ensure each prompt has the following constraints included
-                        - 6 colours maximum
-                        - Vector image traceable
-                        - Screen print ready
-                        - 4:5 ratio
-                        - stylize in the range of 120-160
-                        - No gradients
-                        - No 3D textures
-                        - No textual elements
-                        - Only low detail shading and highlights
-                        - Floating objects 
-                        - no frames
-                        - no backgrounds at all
-                        - .5mm line widths at a minimum
-                        - Low complexity
-                        - Minimalist artwork
-                        - Solid colours, no tints
-                        - no shading
-                        - vector images,
-                        - make sure it is low details.
-                        - make sure there is no background detail at all! 
-                        - plane background
-                        6.if prompt includes "--style" change it to "--stylyize".
+    You will be provided with the following inputs:
+    - A project overview
+    - Reference links
+    - Key design elements
+    - Target audience description
 
-                        Return your output in the following list format:
-                        {
-                        "Prompts": [
-                            {
-                            "Prompt 1": "[MidJourney-compatible prompt string based on the design brief]"
-                            },
-                            {
-                            "Prompt 2": "[MidJourney-compatible prompt string based on the design brief]"
-                            },
-                            {
-                            "Prompt 3": "[MidJourney-compatible prompt string based on the design brief]"
-                            },
-                            {
-                            "Prompt 4": "[MidJourney-compatible prompt string based on the design brief]"
-                            },
-                            {
-                            "Prompt 5": "[MidJourney-compatible prompt string based on the design brief]"
-                            },
-                            {
-                            "Prompt 6": "[MidJourney-compatible prompt string based on the design brief]"
-                            },
-                            {
-                            "Prompt 7": "[MidJourney-compatible prompt string based on the design brief]"
-                            },
-                            {
-                            "Prompt 8": "[MidJourney-compatible prompt string based on the design brief]"
-                            },
-                            {
-                            "Prompt 9": "[MidJourney-compatible prompt string based on the design brief]"
-                            },
-                            {
-                            "Prompt 10": "[MidJourney-compatible prompt string based on the design brief]"
-                            },
-                        ]
-                        }
-         Think like a designer. Be creative but bounded by the brief. Every prompt must respect the technical and artistic constraints.
+    Your task is to:
+    1. Research the topic thoroughly using the given information.
+    2. Provide a detailed and insightful design plan that reflects the cultural and historical significance of the theme.
+    3. Ensure that the plan aligns closely with the client's requirements and audience expectations.
 
-        """
+    Deliver the output in **well-structured paragraph form**, avoiding lists or bullet points. The writing should feel intentional, researched, and visually descriptive — suitable for briefing a creative team or illustrator. Prioritize authenticity, relevance, and narrative depth."""
+
                 },
                 {
                     "role": "user",
-                    "content":pdf_content
+                    "content": pdf_content
                 }
             ]
         )
-
-
+        
+        # Extract and return the generated structured insights from the GPT response.
         return completion.choices[0].message.content
 
-with st.spinner('Generating Prompts..'):
-    prompts = generate_prompts(parsed_dict,structured_insights,client)
-promptList = prompts
-#print(promptList)
+    with st.spinner('Creating Design Brief..'):
+        structured_insights = generate_structured_design_insights(parsed_dict, client)
+    #print("Structured Design Insights:\n", structured_insights)
+    st.subheader("📜 Design Brief")
+    st.text_area("Text from document:", structured_insights, height=400)
 
-#st.subheader("📜 Prompts")
-#st.text_area("Text from document:", promptList, height=400)
+    promptCount = 25
+
+    ##Generate Prompts
+    def generate_prompts(project_data,structured_insights,client):    
+            """
+        Extracts the "Design Goals" and "What should Not be used" from project_data,
+        sends them to GPT with instructions to return a structured JSON response.
+        In the JSON:
+        - Each design theme is given as a key and its value is a dictionary combining:
+            • Design Concept
+            • Artistic Approach
+            • (Optionally) a list of style techniques related to that theme.
+        - Additional sections like Color Palettes, Suggestions for Kids’ Designs,
+            and a Conclusion are also included.
+        
+        :param project_data: dict containing project details with at least
+        "Overview", "Reference Links", "Key Design Elements" and "Target Audience" keys.
+        :param client: The client object to call the GPT API.
+        :return: The structured JSON response (as a string) from GPT.
+        """
+            
+            design_goals = "\n".join(project_data.get("Design Goals", []))
+            avoid = "\n".join(project_data.get("What should NOT be used", []))
+            design_constraint = "\n".join(project_data.get("Constraints", []))
+            targetAudience_text = "\n".join(project_data.get("Target Audience", []))
+            pdf_content = f"Design Goals:\n{design_goals}\n\nWhat should Not be used:\n{avoid}\n\nDesign Constraints:\n{design_constraint}\n\nTarget Audience:\n{targetAudience_text}\n\nDesign Brief:\n{structured_insights}"
+
+        
+
+            completion = client.chat.completions.create(
+                model="gpt-4.1",  # or "gpt-4o-mini" if available
+                store=True,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": """
+                            You are a senior visual designer with deep expertise in interpreting creative briefs and crafting high-quality, production-ready prompts for MidJourney.
+
+                            Your objective is to:
+                            1. Carefully analyze the provided design brief and identify relevant visual themes, stylistic references, and technical constraints.
+                            2. Incorporate relevant insights from the supporting document: {structured_insights}.
+                            3. Generate the most relevant, contextful prompts, high-fidelity MidJourney prompts that:
+                            - Align precisely with the design brief (from {pdf_content})
+                            - Reflect realistic, non-fictional contexts
+                            - Are appropriate for screen printing applications
+                            - Are not generic
+
+                            Each prompt must strictly adhere to the following design and production constraints:
+                            - Maximum of 6 solid colors (no gradients or tints)
+                            - Vector image, traceable and scalable
+                            - Ready for screen printing
+                            - 4:5 aspect ratio
+                            - Stylization in the range of 120 to 160
+                            - No gradients, 3D textures, or shading
+                            - No textual elements or typography
+                            - Minimalist composition with low visual complexity
+                            - Only floating objects (no backgrounds or frames)
+                            - Plain background with zero detail
+                            - Minimum 0.5mm line width
+                            - Clear and concise subject representation
+                            - Stylized with low-detail highlights only (if any)
+
+                            **If a prompt contains the `--style` parameter, replace it with `--stylize`.**
+
+                            ### Output Format:
+                            Return your response in the following structured format:
+
+                            {
+                            "Prompts": [
+                                { "Prompt 1": "[MidJourney-compatible prompt string]" },
+                                { "Prompt 2": "[MidJourney-compatible prompt string]" },
+                                { "Prompt 3": "[MidJourney-compatible prompt string]" },
+                                { "Prompt 4": "[MidJourney-compatible prompt string]" }
+                                { "Prompt 5": "[MidJourney-compatible prompt string]" },
+                                { "Prompt 6": "[MidJourney-compatible prompt string]" },                                
+                                { "Prompt 7": "[MidJourney-compatible prompt string]" },
+                                { "Prompt 8": "[MidJourney-compatible prompt string]" },                                
+                                { "Prompt 9": "[MidJourney-compatible prompt string]" },
+                                { "Prompt 10": "[MidJourney-compatible prompt string]" },                               
+                                { "Prompt 11": "[MidJourney-compatible prompt string]" },
+                                { "Prompt 12": "[MidJourney-compatible prompt string]" },                                
+                                { "Prompt 13": "[MidJourney-compatible prompt string]" },
+                                { "Prompt 14": "[MidJourney-compatible prompt string]" },                               
+                                { "Prompt 15": "[MidJourney-compatible prompt string]" },
+                                { "Prompt 16": "[MidJourney-compatible prompt string]" },                                
+                                { "Prompt 17": "[MidJourney-compatible prompt string]" },
+                                { "Prompt 18": "[MidJourney-compatible prompt string]" },                                
+                                { "Prompt 19": "[MidJourney-compatible prompt string]" },                                
+                                { "Prompt 20": "[MidJourney-compatible prompt string]" },
+                                { "Prompt 21": "[MidJourney-compatible prompt string]" },                               
+                                { "Prompt 22": "[MidJourney-compatible prompt string]" },
+                                { "Prompt 23": "[MidJourney-compatible prompt string]" },                                
+                                { "Prompt 24": "[MidJourney-compatible prompt string]" },
+                                { "Prompt 25": "[MidJourney-compatible prompt string]" },  
+                                                       ]
+                            }
+
+                            **Guidelines:**
+                            - Think like a professional designer with a strong sense of practicality.
+                            - Avoid imaginative or fictional elements that don't align with real-world constraints.
+                            - Keep the prompts efficient, clear, and engineered to produce consistent, print-ready visual outputs.
+                            - Ensure all elements are compliant with screen printing limitations.
+
+                            Deliver only the JSON-formatted response. Do not include explanations or commentary.
+                        """
+                    },
+                    {
+                        "role": "user",
+                        "content":pdf_content
+                    }
+                ]
+            )
 
 
-import json
+            return completion.choices[0].message.content
 
-# 1) If promptList is a JSON string, parse it; otherwise assume it's already a dict
-if isinstance(promptList, str):
-    data = json.loads(promptList)
-else:
-    data = promptList
+    with st.spinner('Generating Prompts..'):
+        prompts = generate_prompts(parsed_dict,structured_insights,client)
+    promptList = prompts
+    #print(promptList)
 
-# 2) Now data["Prompts"] is a real list of single‑key dicts
-#    Extract the one value from each dict
-prompt_list = [list(item.values())[0] for item in data["Prompts"]]
-
-st.markdown("### Prompts:")
-st.markdown("\n".join([f"- {item}" for item in prompt_list]))
-
-data = prompt_list
-
-# 2) Convert into a list of payload dicts
-payloads = [{"prompt": prompt} for prompt in data]
-
-import http.client
-import json
-import time
-import pprint
-
-# === Configuration ===
-
-connection = http.client.HTTPSConnection("cl.imagineapi.dev")
-
-new_var = os.getenv('MJ_KEY')
-
-print("MJ kEYS: ",new_var)
-headers = {
-    'Authorization': new_var,  
-    'Content-Type': 'application/json'
-}
-
-response_data = {}  
-upscaled_urls = []
-prompt_id = []
-
-# List of prompts to process
-prompts = prompt_list
+    #st.subheader("📜 Prompts")
+    #st.text_area("Text from document:", promptList, height=400)
 
 
+    import json
 
-
-# Function to send API requests
-def send_request(method, path, body=None, headers={}):
-    conn = http.client.HTTPSConnection("cl.imagineapi.dev")
-    conn.request(method, path, body=json.dumps(body) if body else None, headers=headers)
-    response = conn.getresponse()
-    data = json.loads(response.read().decode())
-    conn.close()
-    return data
-
-payloads = [{"prompt": prompt} for prompt in prompts]
-# for payload in payloads:
-#     print(payload)
-# Send initial image generation request
-
-
-def check_image_status(prompt_id):
-    global upscaled_urls
-
-    response_data = send_request('GET', f"/items/images/{prompt_id}", headers=headers)
-
-    if response_data['data']['status'] in ['completed', 'failed']:
-        print(f"✅ Image generation completed for prompt ID {prompt_id}:")
-        pprint.pp(response_data['data'])
-
-        # Save the upscaled URLs if they exist
-        if "upscaled_urls" in response_data['data'] and isinstance(response_data['data']['upscaled_urls'], list):
-            upscaled_urls.append(response_data['data']['upscaled_urls'])
-            print("🔗 Collected URLs so far:", upscaled_urls)
-
-        return True
+    # 1) If promptList is a JSON string, parse it; otherwise assume it's already a dict
+    if isinstance(promptList, str):
+        data = json.loads(promptList)
     else:
-        print(f"⏳ Prompt ID {prompt_id} is still generating. Status: {response_data['data']['status']}")
-        return False
+        data = promptList
 
-# Main loop for sending prompts and checking their status
-for data in payloads:
-    # Submit prompt
-    prompt_response_data = send_request('POST', '/items/images/', data, headers)
-    pprint.pp(prompt_response_data)
+    # 2) Now data["Prompts"] is a real list of single‑key dicts
+    #    Extract the one value from each dict
+    prompt_list = [list(item.values())[0] for item in data["Prompts"]]
 
-    # Extract prompt ID
-    prompt_id.append(prompt_response_data['data']['id'])
-print(prompt_id)
+    st.markdown("### Prompts:")
+    st.markdown("\n".join([f"{i+1}. {item}" for i, item in enumerate(prompt_list)]))
+
+    data = prompt_list
+
+    # 2) Convert into a list of payload dicts
+    payloads = [{"prompt": prompt} for prompt in data]
+
+    import http.client
+    import json
+    import time
+    import pprint
+
+    # === Configuration ===
+
+    connection = http.client.HTTPSConnection("cl.imagineapi.dev")
+
+    new_var = os.getenv('MJ_KEY')
+
+    print("MJ kEYS: ",new_var)
+    headers = {
+        'Authorization': new_var,  
+        'Content-Type': 'application/json'
+    }
+
+    response_data = {}  
+    upscaled_urls = []
+    prompt_id = []
+
+    # List of prompts to process
+    prompts = prompt_list
 
 
-st.subheader("📜 Image Generation Status")
-with st.status("Creating Images...", expanded=True) as status:
+    import time
+
+    # Function to send API requests
+    def send_request(method, path, body=None, headers={}):
+        conn = http.client.HTTPSConnection("cl.imagineapi.dev")
+        conn.request(method, path, body=json.dumps(body) if body else None, headers=headers)
+        response = conn.getresponse()
+        data = json.loads(response.read().decode())
+        conn.close()
+        return data
+
+    payloads = [{"prompt": prompt} for prompt in prompts]
+    # for payload in payloads:
+    #     print(payload)
+    # Send initial image generation request
+
+
+    def check_image_status(prompt_id):
+        global upscaled_urls
+
+        response_data = send_request('GET', f"/items/images/{prompt_id}", headers=headers)
+
+        if response_data['data']['status'] in ['completed', 'failed']:
+            print(f"✅ Image generation completed for prompt ID {prompt_id}:")
+            pprint.pp(response_data['data'])
+
+            # Save the upscaled URLs if they exist
+            if "upscaled_urls" in response_data['data'] and isinstance(response_data['data']['upscaled_urls'], list):
+                upscaled_urls.append(response_data['data']['upscaled_urls'])
+                print("🔗 Collected URLs so far:", upscaled_urls)
+
+            return True
+        else:
+            print(f"⏳ Prompt ID {prompt_id} is still generating. Status: {response_data['data']['status']}")
+            return False
+
+    # Main loop for sending prompts and checking their status
+    for i, data in enumerate(payloads):
+         
+        # Submit prompt
+        prompt_response_data = send_request('POST', '/items/images/', data, headers)
+        pprint.pp(prompt_response_data)
+        prompt_id.append(prompt_response_data['data']['id'])
+        if (i + 1) % 8 == 0:
+            time.sleep(10)
+
+        # Extract prompt ID
+    
+
+
+    st.subheader("📜 Image Generation Status")
+
+    # Create an empty placeholder for status updates.
+    status_placeholder = st.empty()
+    status = status_placeholder.status("Creating Images...", expanded=True)
+
+    # Iterate over each prompt ID and check for the image status
     for id in prompt_id:
-        st.write(f"🟡 Generating image for prompt ID: `{id}`")
-
         while not check_image_status(id):
-            st.write(f"⏳ Still processing prompt ID: `{id}`...")
-            time.sleep(3)
+            time.sleep(3)  # Check every 3 seconds
 
-        st.write(f"✅ Done! Image for prompt ID: `{id}` completed.")
-    
+        # As soon as the image is ready, update the status and display the result
+        status_placeholder.write(f"✅ Done! Image for prompt ID: `{id}` completed.")
+
+    # Update the status after all images are created
     status.update(label="All images created!", state="complete")
-# After all prompts are processed
-# print("\n🎉 All done! Final list of upscaled image URLs:")
-# pprint.pp(upscaled_urls)
+    import math
+    # Now, render the images for each upscaled URL.
+    for idx, group in enumerate(upscaled_urls):
+        with st.container():
+            st.subheader(f"Prompt {idx + 1}:") 
+            st.write(f"{prompt_list[idx]}")
 
+            num_per_row = 4
+            num_rows = math.ceil(len(group) / num_per_row)
 
-# st.markdown("### URLs:")
-# st.markdown("\n".join([f"- {item}" for item in upscaled_urls]))
+            for i in range(num_rows):
+                row_imgs = group[i*num_per_row:(i+1)*num_per_row]
+                cols = st.columns(len(row_imgs))
+                for col, url in zip(cols, row_imgs):
+                    with col:
+                        st.image(url, use_container_width=True)
+                        st.caption(f"Image {group.index(url) + 1}")
 
-# for idx, group in enumerate(upscaled_urls):
-#     st.subheader(f"Prompt {idx + 1}:") 
-#     st.write(f"{prompt_list[idx]}")
-#     cols = st.columns(len(group))  # create a column for each image
-#     for col, url in zip(cols, group):
-#         with col:
-#             st.image(url, use_container_width=True)
-    
-import math
-
-for idx, group in enumerate(upscaled_urls):
-    with st.container():
-        st.subheader(f"Prompt {idx + 1}:") 
-        st.write(f"{prompt_list[idx]}")
-
-        num_per_row = 4
-        num_rows = math.ceil(len(group) / num_per_row)
-
-        for i in range(num_rows):
-            row_imgs = group[i*num_per_row:(i+1)*num_per_row]
-            cols = st.columns(len(row_imgs))
-            for col, url in zip(cols, row_imgs):
-                with col:
-                    st.image(url, use_container_width=True)
-                    st.caption(f"Image {group.index(url) + 1}")
-
-    st.divider()    
+        st.divider()

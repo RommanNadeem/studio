@@ -5,6 +5,9 @@ import tempfile
 import streamlit as st
 from openai import OpenAI
 from docx import Document
+import requests
+from PIL import Image
+from io import BytesIO
 import fitz
 import json
 import http.client
@@ -16,6 +19,12 @@ import PyPDF2
 import os
 import io
 from dotenv import load_dotenv
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+from googleapiclient.http import MediaIoBaseUpload
+from google.auth.transport.requests import Request
 load_dotenv()
 
 
@@ -28,6 +37,17 @@ client = OpenAI(
 st.set_page_config(page_title="📄 Document Reader", layout="centered")
 
 st.title(":blue[Studio Stream]")
+
+st.title("Enter a project name")
+with st.form("project_form"):
+    project_name = st.text_input("Enter Project Name")
+    submitted = st.form_submit_button("Create Project")
+
+    if submitted:
+        if project_name.strip():
+            st.success(f"Project '{project_name}' created successfully!")
+        else:
+            st.error("Please enter a valid project name.")
 
 
 content =""
@@ -96,12 +116,9 @@ else:  # Text mode
 
 
 # ——— Show the result ———
-if 'content' in locals() and content:
-    st.subheader("Processed Content")
+#if 'content' in locals() and content:
+    #st.subheader("Processed Content")
     #st.write(content)
-
-
-
     # st.subheader("📜 Document Content")
     # st.text_area("Text from document:", content, height=400)
 
@@ -167,7 +184,7 @@ if content:
     - Low complexity
     - Minimalist artwork
     - Solid colours, no tints
-    - --ar 4:5 --stylize 200 --quality 2
+    - --ar 4:5 --stylize 120-160 --quality 2
     ---
     Be specific and extarct information as it is, without adding additional content on your own.
     """
@@ -335,6 +352,7 @@ if content:
                             - Reflect realistic, non-fictional contexts
                             - Are appropriate for screen printing applications
                             - Are not generic
+                            - Generate only 25 prompts
 
                             Each prompt must strictly adhere to the following design and production constraints:
                             - Maximum of 6 solid colors (no gradients or tints)
@@ -359,30 +377,6 @@ if content:
                             {
                             "Prompts": [
                                 { "Prompt 1": "[MidJourney-compatible prompt string]" },
-                                { "Prompt 2": "[MidJourney-compatible prompt string]" },
-                                { "Prompt 3": "[MidJourney-compatible prompt string]" },
-                                { "Prompt 4": "[MidJourney-compatible prompt string]" }
-                                { "Prompt 5": "[MidJourney-compatible prompt string]" },
-                                { "Prompt 6": "[MidJourney-compatible prompt string]" },                                
-                                { "Prompt 7": "[MidJourney-compatible prompt string]" },
-                                { "Prompt 8": "[MidJourney-compatible prompt string]" },                                
-                                { "Prompt 9": "[MidJourney-compatible prompt string]" },
-                                { "Prompt 10": "[MidJourney-compatible prompt string]" },                               
-                                { "Prompt 11": "[MidJourney-compatible prompt string]" },
-                                { "Prompt 12": "[MidJourney-compatible prompt string]" },                                
-                                { "Prompt 13": "[MidJourney-compatible prompt string]" },
-                                { "Prompt 14": "[MidJourney-compatible prompt string]" },                               
-                                { "Prompt 15": "[MidJourney-compatible prompt string]" },
-                                { "Prompt 16": "[MidJourney-compatible prompt string]" },                                
-                                { "Prompt 17": "[MidJourney-compatible prompt string]" },
-                                { "Prompt 18": "[MidJourney-compatible prompt string]" },                                
-                                { "Prompt 19": "[MidJourney-compatible prompt string]" },                                
-                                { "Prompt 20": "[MidJourney-compatible prompt string]" },
-                                { "Prompt 21": "[MidJourney-compatible prompt string]" },                               
-                                { "Prompt 22": "[MidJourney-compatible prompt string]" },
-                                { "Prompt 23": "[MidJourney-compatible prompt string]" },                                
-                                { "Prompt 24": "[MidJourney-compatible prompt string]" },
-                                { "Prompt 25": "[MidJourney-compatible prompt string]" },  
                                                        ]
                             }
 
@@ -544,3 +538,119 @@ if content:
                         st.caption(f"Image {group.index(url) + 1}")
 
         st.divider()
+
+    
+
+    #save in google drive
+
+    SCOPES = ['https://www.googleapis.com/auth/drive']
+    creds = None
+
+    if os.path.exists('token.json'):
+        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+
+    # If no valid creds, go through browser flow
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(str('credentials.json'), SCOPES)
+            # make sure you've added http://localhost:8080/ as an Authorized redirect URI
+            creds = flow.run_local_server(host='localhost', port=8080)
+            # Save for next run
+        with open('token.json', 'w') as token:
+            token.write(creds.to_json())
+
+    service = build('drive', 'v3', credentials=creds)
+
+    # file_metadata = {'name': 'Container.png'}
+    # media = MediaFileUpload('Container.png', mimetype='image/png')
+    # file = service.files().create(
+    #     body=file_metadata,
+    #     media_body=media,
+    #     fields='id'
+    # ).execute()
+    # print(f'Uploaded File ID: {file.get("id")}')
+
+    def get_folder_id(name):
+        query = (
+            f"name = '{name}' "
+            "and mimeType = 'application/vnd.google-apps.folder' "
+            "and trashed = false"
+        )
+        results = service.files().list(
+            q=query,
+            spaces='drive',
+            fields='files(id, name)'
+        ).execute()
+        items = results.get('files', [])
+        if not items:
+            raise FileNotFoundError(f"No folder named '{name}' found.")
+        # Return the first match
+        return items[0]['id']
+
+    projects_id = get_folder_id('projects')
+    print("Projects folder ID:", projects_id)
+
+    #creating sub folder 
+    def create_subfolder(name, parent_id):
+        metadata = {
+            'name': name,
+            'mimeType': 'application/vnd.google-apps.folder',
+            'parents': [parent_id]
+        }
+        folder = service.files().create(
+            body=metadata,
+            fields='id'
+        ).execute()
+        return folder.get('id')
+
+    # Example: create a folder named with today’s date
+    import datetime
+    new_folder_name = project_name
+    new_folder_id = create_subfolder(new_folder_name, projects_id)
+    print("Created subfolder ID:", new_folder_id)
+
+
+    def upload_image_url_to_drive(service, url, folder_id, name):
+    # 1) Fetch and open
+        resp = requests.get(url)
+        resp.raise_for_status()
+        img = Image.open(BytesIO(resp.content))
+
+        # 2) Ensure PNG mode
+        if img.mode not in ("RGB", "RGBA"):
+            img = img.convert("RGBA")
+
+        # 3) Serialize to in-memory PNG
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        buf.seek(0)
+
+        # 4) Derive filename
+        filename = name or (Path(url).stem + ".png")
+
+        # 5) Build metadata and upload
+        metadata = {"name": filename}
+        if folder_id:
+            metadata["parents"] = [folder_id]
+            media = MediaIoBaseUpload(buf, mimetype="image/png", resumable=True)
+            created = service.files().create(body=metadata, media_body=media, fields="id,name").execute()
+            return created["id"]
+
+    # Assume you’ve already run your OAuth flow and have `service`:
+    # service = get_drive_service_oauth()
+
+    print("URLS:",upscaled_urls)
+    flat_urls = [url for sublist in upscaled_urls for url in sublist]
+
+    import random
+    for url in flat_urls:
+        # unique_name = f"{random.randint(0, 0xFFFFF):05X}"
+        # unique_name = str(unique_name)
+        parts = url.split('/')
+        folder = parts[-2]
+        filename = parts[-1].split('.')[0]
+        unique_name = f"{folder}_{filename}"
+        file_id = upload_image_url_to_drive(service, url, new_folder_id, str(unique_name))
+        print(f"Uploaded {url} → Drive file ID {new_folder_id}")
